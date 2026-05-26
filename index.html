@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>DARK CONE</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
+  <script>
+    // ── MAZE (15×15) ──────────────────────────────────────────────
+    // 1 = wall, 0 = floor
+    // Player: (1,1)  Key: (13,1)  Exit: (1,13)  Monster: (7,7)
+    const ROWS = 15, COLS = 15;
+    const TILE = Math.floor(Math.min(window.innerWidth, window.innerHeight) / COLS);
+
+    const MAZE = [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1],
+      [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1],
+      [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+      [1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
+      [1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ];
+
+    // ── HELPERS ───────────────────────────────────────────────────
+    function tw(col, row) { return { x: col * TILE + TILE / 2, y: row * TILE + TILE / 2 }; }
+    function wt(x, y) { return { col: Math.floor(x / TILE), row: Math.floor(y / TILE) }; }
+    function wall(c, r) { return (r < 0 || r >= ROWS || c < 0 || c >= COLS) || MAZE[r][c] === 1; }
+
+    function buildSegments() {
+      const s = [], W = COLS * TILE, H = ROWS * TILE;
+      s.push({ x1: 0, y1: 0, x2: W, y2: 0 }, { x1: W, y1: 0, x2: W, y2: H }, { x1: W, y1: H, x2: 0, y2: H }, { x1: 0, y1: H, x2: 0, y2: 0 });
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+        if (!wall(c, r)) continue;
+        const x = c * TILE, y = r * TILE;
+        if (!wall(c, r - 1)) s.push({ x1: x, y1: y, x2: x + TILE, y2: y });
+        if (!wall(c, r + 1)) s.push({ x1: x, y1: y + TILE, x2: x + TILE, y2: y + TILE });
+        if (!wall(c - 1, r)) s.push({ x1: x, y1: y, x2: x, y2: y + TILE });
+        if (!wall(c + 1, r)) s.push({ x1: x + TILE, y1: y, x2: x + TILE, y2: y + TILE });
+      }
+      return s;
+    }
+
+    function rayHit(ox, oy, dx, dy, seg) {
+      const ex = seg.x2 - seg.x1, ey = seg.y2 - seg.y1, den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-8) return Infinity;
+      const tx = seg.x1 - ox, ty = seg.y1 - oy;
+      const t = (tx * ey - ty * ex) / den, u = (tx * dy - ty * dx) / den;
+      return (t >= 0 && u >= 0 && u <= 1) ? t : Infinity;
+    }
+    function castRay(ox, oy, angle, segs, maxD) {
+      const dx = Math.cos(angle), dy = Math.sin(angle);
+      let t = maxD;
+      for (const s of segs) { const h = rayHit(ox, oy, dx, dy, s); if (h < t) t = h; }
+      return { x: ox + dx * t, y: oy + dy * t };
+    }
+    function visPoly(ox, oy, facing, half, maxD, segs) {
+      const a0 = facing - half, a1 = facing + half, angles = [a0, a1];
+      for (const s of segs) for (const [px, py] of [[s.x1, s.y1], [s.x2, s.y2]]) {
+        const a = Math.atan2(py - oy, px - ox);
+        for (const d of [-0.00015, 0, 0.00015]) { const ta = a + d; if (ta >= a0 && ta <= a1) angles.push(ta); }
+      }
+      angles.sort((a, b) => a - b);
+      const pts = [{ x: ox, y: oy }];
+      for (const a of angles) pts.push(castRay(ox, oy, a, segs, maxD));
+      return pts;
+    }
+    function inPoly(px, py, poly) {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+        if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      return inside;
+    }
+
+    // ── HORROR MUSIC ──────────────────────────────────────────────
+    class HorrorMusic {
+      constructor(ctx) {
+        this.ctx = ctx; this.stabCool = 3 + Math.random() * 3;
+        this.master = ctx.createGain(); this.master.gain.value = 0; this.master.connect(ctx.destination);
+        const delay = ctx.createDelay(1.5); delay.delayTime.value = 0.38;
+        const fb = ctx.createGain(); fb.gain.value = 0.38;
+        delay.connect(fb); fb.connect(delay); delay.connect(this.master);
+        this.delay = delay;
+        this._osc('sine', 41.2, 0.38, true); this._osc('sine', 43.6, 0.28, true);
+        this._osc('sine', 27.5, 0.20, false);
+        const tLFO = ctx.createOscillator(), tDepth = ctx.createGain();
+        tLFO.type = 'sine'; tLFO.frequency.value = 0.22; tDepth.gain.value = 0.08;
+        tLFO.connect(tDepth); tDepth.connect(this.master.gain); tLFO.start();
+        const wOsc = ctx.createOscillator(), wG = ctx.createGain();
+        wOsc.type = 'sine'; wOsc.frequency.value = 740; wG.gain.value = 0.014;
+        const wLFO = ctx.createOscillator(), wD = ctx.createGain();
+        wLFO.type = 'sine'; wLFO.frequency.value = 0.06; wD.gain.value = 55;
+        wLFO.connect(wD); wD.connect(wOsc.frequency); wLFO.start(); wOsc.start();
+        wOsc.connect(wG); wG.connect(this.master); wG.connect(delay);
+        const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+        const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        const ns = ctx.createBufferSource(); ns.buffer = buf; ns.loop = true;
+        const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 180; nf.Q.value = 0.7;
+        this.noiseG = ctx.createGain(); this.noiseG.gain.value = 0.025;
+        ns.connect(nf); nf.connect(this.noiseG); this.noiseG.connect(this.master); ns.start();
+        this.master.gain.linearRampToValueAtTime(0.26, ctx.currentTime + 3);
+      }
+      _osc(type, freq, gain, toDelay) {
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = type; o.frequency.value = freq; g.gain.value = gain;
+        o.connect(g); g.connect(this.master); if (toDelay) g.connect(this.delay); o.start();
+      }
+      update(dt, prox) {
+        const t = this.ctx.currentTime;
+        this.master.gain.setTargetAtTime(0.20 + prox * 0.35, t, 0.6);
+        this.noiseG.gain.setTargetAtTime(0.022 + prox * 0.09, t, 0.4);
+        this.stabCool -= dt;
+        if (this.stabCool <= 0) { this.stabCool = (5.5 - prox * 3.5) * (0.6 + Math.random() * 0.8); this._stab(prox); }
+      }
+      _stab(i) {
+        const ctx = this.ctx, t = ctx.currentTime;
+        const pool = [116.5, 123.5, 155.6, 164.8, 185, 195.9, 233.1, 246.9];
+        const note = pool[Math.floor(Math.random() * pool.length)];
+        const osc = ctx.createOscillator(), env = ctx.createGain(), filt = ctx.createBiquadFilter();
+        osc.type = 'sawtooth'; osc.frequency.value = note;
+        filt.type = 'lowpass'; filt.frequency.value = 350 + i * 900; filt.Q.value = 2.5;
+        const vol = 0.07 + i * 0.11, dec = 1.8 + Math.random() * 2.5;
+        env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(vol, t + 0.06);
+        env.gain.exponentialRampToValueAtTime(0.001, t + dec);
+        osc.connect(filt); filt.connect(env); env.connect(this.master); env.connect(this.delay);
+        osc.start(t); osc.stop(t + dec + 0.1);
+      }
+      heartbeat() {
+        const ctx = this.ctx, t = ctx.currentTime;
+        const osc = ctx.createOscillator(), env = ctx.createGain();
+        osc.connect(env); env.connect(this.master); osc.type = 'sine'; osc.frequency.value = 68;
+        env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.38, t + 0.04);
+        env.gain.linearRampToValueAtTime(0, t + 0.13); env.gain.linearRampToValueAtTime(0.22, t + 0.21);
+        env.gain.linearRampToValueAtTime(0, t + 0.35); osc.start(t); osc.stop(t + 0.4);
+      }
+    }
+
+    // ── MENU ──────────────────────────────────────────────────────
+    class MenuScene extends Phaser.Scene {
+      constructor() { super('Menu'); }
+      create() {
+        const W = this.scale.width, H = this.scale.height;
+        this.add.rectangle(W / 2, H / 2, W, H, 0x000000).setOrigin(0.5);
+        this.add.text(W / 2, H * 0.22, 'DARK CONE 2.0', { fontSize: '52px', fontFamily: 'monospace', color: '#ffffff', stroke: '#444', strokeThickness: 2 }).setOrigin(0.5);
+        this.add.text(W / 2, H * 0.46, [
+          'Find the KEY  →  reach the EXIT',
+          '', 'Hold LEFT CLICK  to shine your flashlight',
+          'The monster FREEZES in the light',
+          '', 'Light DRAINS battery.  Darkness recharges it.',
+          '', 'WASD / Arrow Keys to move',
+        ].join('\n'), { fontSize: '14px', fontFamily: 'monospace', color: '#777', align: 'center', lineSpacing: 5 }).setOrigin(0.5);
+        const btn = this.add.text(W / 2, H * 0.79, '[ CLICK  OR  SPACE  TO  START ]', { fontSize: '18px', fontFamily: 'monospace', color: '#ccc' }).setOrigin(0.5);
+        this.tweens.add({ targets: btn, alpha: 0.1, duration: 750, yoyo: true, repeat: -1 });
+        this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
+        this.input.once('pointerdown', () => this.scene.start('Game'));
+      }
+    }
+
+    // ── GAME ──────────────────────────────────────────────────────
+    class GameScene extends Phaser.Scene {
+      constructor() { super('Game'); }
+
+      create() {
+        const W = COLS * TILE, H = ROWS * TILE;
+
+        this.battery = 100; this.lightOn = false; this.hasKey = false;
+        this.startTime = this.time.now; this.dead = false; this.won = false;
+        this.flickerTimer = 0; this.flickerOff = false;
+        this.segs = buildSegments(); this.music = null; this.hbCool = 0;
+
+        // depth: 0=floor  1=walls  2=cone  3=aura  4=items  5=monster  6=player  8=vignette  10=HUD
+
+        // floor
+        this.add.graphics().setDepth(0).fillStyle(0x080808).fillRect(0, 0, W, H);
+
+        // walls
+        const wg = this.add.graphics().setDepth(1).fillStyle(0x2a2a2a);
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+          if (MAZE[r][c] === 1) wg.fillRect(c * TILE, r * TILE, TILE, TILE);
+
+        // cone (redrawn every frame)
+        this.coneGfx = this.add.graphics().setDepth(2);
+
+
+        // exit
+        this.exitPos = tw(1, 13); this.exitGfx = this.add.graphics().setDepth(4); this.drawExit();
+
+        // key
+        this.keyPos = tw(13, 1); this.keyGfx = this.add.graphics().setDepth(4);
+
+        // monster body (only when lit)
+        this.monGfx = this.add.graphics().setDepth(5);
+        this.mon = {
+          x: tw(7, 7).x, y: tw(7, 7).y, angle: Math.PI * 0.75,
+          speed: 78, frozen: false, path: [], pathTimer: 0
+        };
+
+        // player
+        this.playerGfx = this.add.graphics().setDepth(6);
+        this.p = { x: tw(1, 1).x, y: tw(1, 1).y, angle: 0, speed: 110, r: 9 };
+
+
+        // HUD
+        this.buildHUD(W);
+
+        // end-screen overlay
+        this.overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(20);
+        this.overlayTxt = this.add.text(W / 2, H / 2, '', { fontSize: '28px', fontFamily: 'monospace', color: '#fff', align: 'center', lineSpacing: 14 }).setOrigin(0.5).setDepth(21);
+
+        // input
+        this.keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT');
+        this.input.on('pointerdown', p => { if (p.leftButtonDown()) this.lightOn = true; this.initAudio(); });
+        this.input.on('pointerup', () => { this.lightOn = false; });
+        this.input.keyboard.on('keydown', () => this.initAudio());
+      }
+
+      initAudio() {
+        if (this.music) return;
+        try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); this.music = new HorrorMusic(ctx); } catch (e) { }
+      }
+
+      buildHUD(W) {
+        this.add.rectangle(0, 0, W, 26, 0x000000, 0.85).setOrigin(0, 0).setScrollFactor(0).setDepth(10);
+        this.hudLight = this.add.text(8, 6, 'LIGHT: OFF', { fontSize: '12px', fontFamily: 'monospace', color: '#555' }).setScrollFactor(0).setDepth(11);
+        this.hudBat = this.add.text(W / 2 - 55, 6, 'BATTERY: 100', { fontSize: '12px', fontFamily: 'monospace', color: '#888' }).setScrollFactor(0).setDepth(11);
+        this.hudKey = this.add.text(W - 85, 6, 'KEY: NO', { fontSize: '12px', fontFamily: 'monospace', color: '#555' }).setScrollFactor(0).setDepth(11);
+      }
+
+      drawExit() {
+        const { x, y } = this.exitPos, col = this.hasKey ? 0x00ff88 : 0x005533, alpha = this.hasKey ? 0.6 : 0.25;
+        this.exitGfx.clear();
+        this.exitGfx.lineStyle(3, col, 1).strokeRect(x - 14, y - 20, 28, 40);
+        this.exitGfx.fillStyle(col, alpha).fillRect(x - 14, y - 20, 28, 40);
+        this.exitGfx.lineStyle(1.5, col, 0.7).strokeCircle(x + 7, y, 3);
+      }
+
+      drawKey(t) {
+        this.keyGfx.clear();
+        if (this.hasKey) return;
+        const pulse = 0.5 + 0.5 * Math.sin(t / 320), br = Math.floor(130 + 125 * pulse);
+        const col = Phaser.Display.Color.GetColor(br, Math.floor(br * 0.82), 0);
+        const { x, y } = this.keyPos;
+        this.keyGfx.fillStyle(col).fillCircle(x, y, 7);
+        this.keyGfx.fillRect(x + 3, y - 2.5, 11, 5).fillRect(x + 10, y - 2.5, 3, 7).fillRect(x + 7, y - 2.5, 3, 6);
+        this.keyGfx.lineStyle(1, col, 0.4 * pulse).strokeCircle(x, y, 11);
+      }
+
+      drawMonster(lit) {
+        this.monGfx.clear();
+        if (!lit) return;
+        const { x, y, angle, frozen } = this.mon, col = frozen ? 0x882222 : 0xff2200, sz = 14;
+        this.monGfx.fillStyle(col).fillTriangle(
+          x + Math.cos(angle) * sz, y + Math.sin(angle) * sz,
+          x + Math.cos(angle + 2.25) * sz * .6, y + Math.sin(angle + 2.25) * sz * .6,
+          x + Math.cos(angle - 2.25) * sz * .6, y + Math.sin(angle - 2.25) * sz * .6
+        );
+        this.monGfx.fillStyle(frozen ? 0x441111 : 0xffffff);
+        this.monGfx.fillCircle(x + Math.cos(angle - .35) * 9, y + Math.sin(angle - .35) * 9, 2.2);
+        this.monGfx.fillCircle(x + Math.cos(angle + .35) * 9, y + Math.sin(angle + .35) * 9, 2.2);
+      }
+
+      drawPlayer() {
+        const { x, y, angle, r } = this.p;
+        this.playerGfx.clear();
+        this.playerGfx.fillStyle(0xffffff).fillCircle(x, y, r);
+        this.playerGfx.fillStyle(0x000000).fillCircle(x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, 3);
+      }
+
+      canMoveTo(x, y) {
+        const r = this.p.r - 1;
+        for (const [dx, dy] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) {
+          if (wall(...Object.values(wt(x + dx, y + dy)))) return false;
+        }
+        return true;
+      }
+
+      // BFS pathfinding on tile grid
+      bfs(fc, fr, tc, tr) {
+        if (fc === tc && fr === tr) return [];
+        const key = (c, r) => c * 100 + r, prev = new Map(), q = [[fc, fr]];
+        prev.set(key(fc, fr), null);
+        while (q.length) {
+          const [c, r] = q.shift();
+          if (c === tc && r === tr) {
+            const path = []; let cur = [tc, tr];
+            while (cur) { path.push(tw(cur[0], cur[1])); cur = prev.get(key(cur[0], cur[1])); }
+            path.reverse(); path.shift(); return path;
+          }
+          for (const [dc, dr] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const nc = c + dc, nr = r + dr, k = key(nc, nr);
+            if (!wall(nc, nr) && !prev.has(k)) { prev.set(k, [c, r]); q.push([nc, nr]); }
+          }
+        }
+        return [];
+      }
+
+      moveMon(dt) {
+        const m = this.mon;
+        if (m.frozen) return;
+        m.pathTimer -= dt;
+        if (m.pathTimer <= 0) {
+          m.pathTimer = 0.35;
+          const { col: mc, row: mr } = wt(m.x, m.y), { col: pc, row: pr } = wt(this.p.x, this.p.y);
+          m.path = this.bfs(mc, mr, pc, pr);
+        }
+        const spd = m.speed * dt;
+        while (m.path.length > 0) {
+          const wp = m.path[0], dx = wp.x - m.x, dy = wp.y - m.y, d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 6) { m.path.shift(); continue; }
+          m.x += dx / d * spd; m.y += dy / d * spd; m.angle = Math.atan2(dy, dx); return;
+        }
+        const dx = this.p.x - m.x, dy = this.p.y - m.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 1) { m.x += dx / d * spd; m.y += dy / d * spd; m.angle = Math.atan2(dy, dx); }
+      }
+
+      update(time, delta) {
+        if (this.dead || this.won) return;
+        const dt = delta / 1000;
+        const W = this.scale.width, H = this.scale.height;
+
+        // player movement
+        const { keys, p } = this;
+        let mx = (keys.D.isDown || keys.RIGHT.isDown ? 1 : 0) - (keys.A.isDown || keys.LEFT.isDown ? 1 : 0);
+        let my = (keys.S.isDown || keys.DOWN.isDown ? 1 : 0) - (keys.W.isDown || keys.UP.isDown ? 1 : 0);
+        if (mx || my) {
+          const len = Math.sqrt(mx * mx + my * my), sp = p.speed * dt;
+          if (this.canMoveTo(p.x + mx / len * sp, p.y)) p.x += mx / len * sp;
+          if (this.canMoveTo(p.x, p.y + my / len * sp)) p.y += my / len * sp;
+        }
+        // face mouse (worldX/Y already accounts for camera & scale)
+        const mp = this.input.activePointer;
+        p.angle = Math.atan2(mp.worldY - p.y, mp.worldX - p.x);
+
+        // battery
+        const litActive = this.lightOn && this.battery > 0;
+        this.battery = litActive ? Math.max(0, this.battery - 15 * dt) : Math.min(100, this.battery + 8 * dt);
+
+        let renderLight = litActive;
+        if (litActive && this.battery < 15) {
+          this.flickerTimer += dt;
+          if (this.flickerTimer > .045) { this.flickerTimer = 0; this.flickerOff = Math.random() < .42; }
+          if (this.flickerOff) renderLight = false;
+        } else { this.flickerOff = false; }
+
+        // visibility polygon — world-space
+        const HALF = Phaser.Math.DegToRad(38), MAXD = TILE * 5.5;
+        let cone = null;
+        if (renderLight) cone = visPoly(p.x, p.y, p.angle, HALF, MAXD, this.segs);
+
+        // cone light drawn directly as white polygon in world-space
+        this.coneGfx.clear();
+        if (cone && cone.length > 2) {
+          this.coneGfx.fillStyle(0xffffff, 0.92);
+          this.coneGfx.fillPoints(cone, true, true);
+        }
+
+        // monster
+        const m = this.mon;
+        const monLit = !!(cone && cone.length > 2 && inPoly(m.x, m.y, cone));
+        m.frozen = monLit;
+        this.moveMon(dt);
+        this.drawMonster(monLit);
+
+        // pickups
+        if (!this.hasKey && Phaser.Math.Distance.Between(p.x, p.y, this.keyPos.x, this.keyPos.y) < 20) {
+          this.hasKey = true; this.drawExit();
+        }
+        if (this.hasKey && Phaser.Math.Distance.Between(p.x, p.y, this.exitPos.x, this.exitPos.y) < 22) {
+          this.end(true); return;
+        }
+
+        // death
+        const mdist = Phaser.Math.Distance.Between(p.x, p.y, m.x, m.y);
+        if (mdist < 16) { this.end(false); return; }
+
+        // audio
+        if (this.music) {
+          this.music.update(dt, Math.max(0, 1 - mdist / 250));
+          this.hbCool -= dt;
+          const iv = Phaser.Math.Linear(.2, 1.1, Math.min(1, (mdist - 16) / 220));
+          if (this.hbCool <= 0) { this.hbCool = iv; this.music.heartbeat(); }
+        }
+
+        // draw
+        this.drawKey(time);
+        this.drawPlayer();
+
+        // HUD
+        this.hudLight.setText(`LIGHT: ${litActive ? 'ON ' : 'OFF'}`).setColor(litActive ? '#fff' : '#555');
+        const pct = this.battery / 100;
+        this.hudBat.setText(`BATTERY: ${Math.floor(this.battery)}`).setColor(pct > .4 ? '#0c4' : pct > .15 ? '#fa0' : '#f22');
+        this.hudKey.setText(`KEY: ${this.hasKey ? 'YES' : 'NO '}`).setColor(this.hasKey ? '#fd0' : '#555');
+      }
+
+      end(won) {
+        if (this.dead || this.won) return;
+        this.dead = !won; this.won = won;
+        const secs = ((this.time.now - this.startTime) / 1000).toFixed(1);
+        this.tweens.add({
+          targets: this.overlay, fillAlpha: .88, duration: 900, ease: 'Power2', onComplete: () => {
+            this.overlayTxt.setText(won ? `YOU ESCAPED!\n\nTime: ${secs}s\n\n[CLICK or SPACE] to play again` : `YOU WERE CAUGHT\n\n[CLICK or SPACE] to restart`);
+            this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
+            this.input.once('pointerdown', () => this.scene.start('Game'));
+          }
+        });
+      }
+    }
+
+    // ── BOOT ──────────────────────────────────────────────────────
+    new Phaser.Game({
+      type: Phaser.AUTO,
+      width: COLS * TILE,
+      height: ROWS * TILE,
+      backgroundColor: '#000000',
+      scene: [MenuScene, GameScene],
+      parent: document.body,
+      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.NO_CENTER },
+      antialias: true,
+    });
+  </script>
+</body>
+
+</html>

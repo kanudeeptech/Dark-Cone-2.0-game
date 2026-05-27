@@ -3,7 +3,7 @@
 A 2D top-down horror-survival maze game built using the **Phaser 3** engine. Navigate dark corridors, manage your flashlight's battery, avoid a hunting monster, and collect keys to make your escape!
 
 ### 🚀 Play the Live Game:
-👉 **[Play Dark Cone 2.0 Live on GitHub Pages](https://kanudeeptech.github.io/Dark-Cone-2.0-game/)**
+👉 **[Play Dark Cone 2.0](https://kanudeeptech.github.io/Dark-Cone-2.0-game/)**
 
 ---
 

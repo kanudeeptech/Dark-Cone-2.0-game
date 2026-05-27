@@ -106,87 +106,167 @@
       return inside;
     }
 
-    // ── HORROR MUSIC ──────────────────────────────────────────────
-    class HorrorMusic {
-      constructor(ctx) {
-        this.ctx = ctx; this.stabCool = 3 + Math.random() * 3;
-        this.master = ctx.createGain(); this.master.gain.value = 0; this.master.connect(ctx.destination);
-        const delay = ctx.createDelay(1.5); delay.delayTime.value = 0.38;
-        const fb = ctx.createGain(); fb.gain.value = 0.38;
-        delay.connect(fb); fb.connect(delay); delay.connect(this.master);
-        this.delay = delay;
-        this._osc('sine', 41.2, 0.38, true); this._osc('sine', 43.6, 0.28, true);
-        this._osc('sine', 27.5, 0.20, false);
-        const tLFO = ctx.createOscillator(), tDepth = ctx.createGain();
-        tLFO.type = 'sine'; tLFO.frequency.value = 0.22; tDepth.gain.value = 0.08;
-        tLFO.connect(tDepth); tDepth.connect(this.master.gain); tLFO.start();
-        const wOsc = ctx.createOscillator(), wG = ctx.createGain();
-        wOsc.type = 'sine'; wOsc.frequency.value = 740; wG.gain.value = 0.014;
-        const wLFO = ctx.createOscillator(), wD = ctx.createGain();
-        wLFO.type = 'sine'; wLFO.frequency.value = 0.06; wD.gain.value = 55;
-        wLFO.connect(wD); wD.connect(wOsc.frequency); wLFO.start(); wOsc.start();
-        wOsc.connect(wG); wG.connect(this.master); wG.connect(delay);
-        const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-        const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-        const ns = ctx.createBufferSource(); ns.buffer = buf; ns.loop = true;
-        const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 180; nf.Q.value = 0.7;
-        this.noiseG = ctx.createGain(); this.noiseG.gain.value = 0.025;
-        ns.connect(nf); nf.connect(this.noiseG); this.noiseG.connect(this.master); ns.start();
-        this.master.gain.linearRampToValueAtTime(0.26, ctx.currentTime + 3);
-      }
-      _osc(type, freq, gain, toDelay) {
-        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-        o.type = type; o.frequency.value = freq; g.gain.value = gain;
-        o.connect(g); g.connect(this.master); if (toDelay) g.connect(this.delay); o.start();
-      }
-      update(dt, prox) {
-        const t = this.ctx.currentTime;
-        this.master.gain.setTargetAtTime(0.20 + prox * 0.35, t, 0.6);
-        this.noiseG.gain.setTargetAtTime(0.022 + prox * 0.09, t, 0.4);
-        this.stabCool -= dt;
-        if (this.stabCool <= 0) { this.stabCool = (5.5 - prox * 3.5) * (0.6 + Math.random() * 0.8); this._stab(prox); }
-      }
-      _stab(i) {
-        const ctx = this.ctx, t = ctx.currentTime;
-        const pool = [116.5, 123.5, 155.6, 164.8, 185, 195.9, 233.1, 246.9];
-        const note = pool[Math.floor(Math.random() * pool.length)];
-        const osc = ctx.createOscillator(), env = ctx.createGain(), filt = ctx.createBiquadFilter();
-        osc.type = 'sawtooth'; osc.frequency.value = note;
-        filt.type = 'lowpass'; filt.frequency.value = 350 + i * 900; filt.Q.value = 2.5;
-        const vol = 0.07 + i * 0.11, dec = 1.8 + Math.random() * 2.5;
-        env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(vol, t + 0.06);
-        env.gain.exponentialRampToValueAtTime(0.001, t + dec);
-        osc.connect(filt); filt.connect(env); env.connect(this.master); env.connect(this.delay);
-        osc.start(t); osc.stop(t + dec + 0.1);
-      }
-      heartbeat() {
-        const ctx = this.ctx, t = ctx.currentTime;
-        const osc = ctx.createOscillator(), env = ctx.createGain();
-        osc.connect(env); env.connect(this.master); osc.type = 'sine'; osc.frequency.value = 68;
-        env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.38, t + 0.04);
-        env.gain.linearRampToValueAtTime(0, t + 0.13); env.gain.linearRampToValueAtTime(0.22, t + 0.21);
-        env.gain.linearRampToValueAtTime(0, t + 0.35); osc.start(t); osc.stop(t + 0.4);
-      }
-    }
-
     // ── MENU ──────────────────────────────────────────────────────
     class MenuScene extends Phaser.Scene {
       constructor() { super('Menu'); }
+
+      preload() {
+        const W = this.scale.width, H = this.scale.height;
+
+        // Add a loading progress text
+        const loadingText = this.add.text(W / 2, H / 2, 'Loading Assets... 0%', {
+          fontSize: '20px',
+          fontFamily: 'monospace',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        // Dynamic loading progress bar
+        const progressBar = this.add.graphics();
+        const progressBox = this.add.graphics();
+        progressBox.fillStyle(0x222222, 0.8);
+        progressBox.fillRect(W / 2 - 160, H / 2 + 30, 320, 16);
+
+        this.load.on('progress', (value) => {
+          loadingText.setText(`Loading Assets... ${Math.floor(value * 100)}%`);
+          progressBar.clear();
+          progressBar.fillStyle(0xe52b2b, 1);
+          progressBar.fillRect(W / 2 - 156, H / 2 + 34, 312 * value, 8);
+        });
+
+        this.load.on('complete', () => {
+          loadingText.destroy();
+          progressBar.destroy();
+          progressBox.destroy();
+        });
+
+        // Load audios
+        this.load.audio('background', 'music/background.wav');
+        this.load.audio('crunching', 'music/crunching.mp3');
+        this.load.audio('death', 'music/death.mp3');
+        this.load.audio('winning', 'music/winning.wav');
+      }
+
       create() {
         const W = this.scale.width, H = this.scale.height;
         this.add.rectangle(W / 2, H / 2, W, H, 0x000000).setOrigin(0.5);
-        this.add.text(W / 2, H * 0.22, 'DARK CONE 2.0', { fontSize: '52px', fontFamily: 'monospace', color: '#ffffff', stroke: '#444', strokeThickness: 2 }).setOrigin(0.5);
-        this.add.text(W / 2, H * 0.46, [
-          'Find the KEY  →  reach the EXIT',
-          '', 'Hold LEFT CLICK  to shine your flashlight',
-          'The monster FREEZES in the light',
-          '', 'Light DRAINS battery.  Darkness recharges it.',
-          '', 'WASD / Arrow Keys to move',
-        ].join('\n'), { fontSize: '14px', fontFamily: 'monospace', color: '#777', align: 'center', lineSpacing: 5 }).setOrigin(0.5);
-        const btn = this.add.text(W / 2, H * 0.79, '[ CLICK  OR  SPACE  TO  START ]', { fontSize: '18px', fontFamily: 'monospace', color: '#ccc' }).setOrigin(0.5);
-        this.tweens.add({ targets: btn, alpha: 0.1, duration: 750, yoyo: true, repeat: -1 });
+
+        // Draw subtle grid lines
+        const gridGfx = this.add.graphics().setDepth(0);
+        gridGfx.lineStyle(1, 0x222222, 0.25);
+        for (let r = 0; r <= ROWS; r++) {
+          gridGfx.lineBetween(0, r * TILE, W, r * TILE);
+        }
+        for (let c = 0; c <= COLS; c++) {
+          gridGfx.lineBetween(c * TILE, 0, c * TILE, H);
+        }
+
+        // Add soft-drifting background dust particles for spooky atmosphere
+        if (!this.textures.exists('dust')) {
+          const canvas = this.textures.createCanvas('dust', 4, 4);
+          canvas.context.fillStyle = '#ffffff';
+          canvas.context.fillRect(0, 0, 4, 4);
+          canvas.refresh();
+        }
+        this.add.particles(0, 0, 'dust', {
+          x: { min: 0, max: W },
+          y: { min: 0, max: H },
+          lifespan: 6000,
+          speed: { min: 4, max: 15 },
+          angle: { min: 0, max: 360 },
+          scale: { min: 0.2, max: 1 },
+          alpha: { min: 0.05, max: 0.22 },
+          frequency: 120,
+          depth: 1
+        });
+
+        // Dynamic searchlight beam graphics
+        this.menuLight = this.add.graphics().setDepth(2);
+
+        // Title
+        const title = this.add.text(W / 2, H * 0.22, 'DARK CONE 2.0', {
+          fontSize: '56px',
+          fontFamily: 'monospace',
+          color: '#e52b2b',
+          stroke: '#ffffff',
+          strokeThickness: 3,
+          shadow: { color: '#e52b2b', fill: true, blur: 15, x: 0, y: 0 }
+        }).setOrigin(0.5).setDepth(3);
+
+        this.tweens.add({
+          targets: title,
+          scaleX: 1.04,
+          scaleY: 1.04,
+          duration: 1500,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut'
+        });
+
+        // Instructions
+        const instructions = [
+          '🔑  Find 2 hidden KEYS in the dark corridors',
+          '🚪  Locate the ESCAPE DOOR once you have both keys',
+          '🔦  Hold LEFT CLICK to shine your flashlight',
+          '👾  The monster FREEZES when caught in your light cone',
+          '⚡  Light DRAINS battery — release click to recharge',
+          '⌨️  Use WASD or ARROW KEYS to move around'
+        ];
+
+        let yOffset = H * 0.38;
+        instructions.forEach(inst => {
+          this.add.text(W / 2, yOffset, inst, {
+            fontSize: '13px',
+            fontFamily: 'monospace',
+            color: '#bbbbbb',
+            align: 'center'
+          }).setOrigin(0.5).setDepth(3);
+          yOffset += 28;
+        });
+
+        // Play Button / Trigger
+        const btn = this.add.text(W / 2, H * 0.82, '[ CLICK  OR  SPACE  TO  ENTER  THE  DARKNESS ]', {
+          fontSize: '16px',
+          fontFamily: 'monospace',
+          color: '#e52b2b',
+          shadow: { color: '#e52b2b', fill: true, blur: 5, x: 0, y: 0 }
+        }).setOrigin(0.5).setDepth(3);
+        
+        this.tweens.add({ targets: btn, alpha: 0.2, duration: 900, yoyo: true, repeat: -1 });
+
+        // Start background music at 100% volume
+        if (!this.sound.get('background')) {
+          this.bgMusic = this.sound.add('background', { loop: true, volume: 1.0 });
+          this.bgMusic.play();
+        } else {
+          this.bgMusic = this.sound.get('background');
+          if (!this.bgMusic.isPlaying) {
+            this.bgMusic.play();
+          }
+          this.bgMusic.setVolume(1.0);
+        }
+
         this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
         this.input.once('pointerdown', () => this.scene.start('Game'));
+      }
+
+      update(time) {
+        const W = this.scale.width, H = this.scale.height;
+        this.menuLight.clear();
+
+        // Cinema sweeping searchlight from top-center
+        const angle = Math.PI / 2 + Math.sin(time * 0.0012) * 0.6;
+        const px = W / 2, py = 20;
+        const len = H * 1.2;
+        const a1 = angle - 0.22;
+        const a2 = angle + 0.22;
+
+        this.menuLight.fillStyle(0xffffff, 0.18); // Increased intensity to 0.18 alpha
+        this.menuLight.beginPath();
+        this.menuLight.moveTo(px, py);
+        this.menuLight.lineTo(px + Math.cos(a1) * len, py + Math.sin(a1) * len);
+        this.menuLight.lineTo(px + Math.cos(a2) * len, py + Math.sin(a2) * len);
+        this.menuLight.closePath();
+        this.menuLight.fillPath();
       }
     }
 
@@ -194,13 +274,71 @@
     class GameScene extends Phaser.Scene {
       constructor() { super('Game'); }
 
+      getRandomKeyTiles(count) {
+        const candidates = [];
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (MAZE[r][c] === 0) {
+              const isPlayerStart = (r === 1 && c === 1);
+              const isExit = (c === 1 && r === 13);
+              const isMonsterStart = (c === 7 && r === 7);
+              const distToPlayer = Math.abs(c - 1) + Math.abs(r - 1);
+
+              if (!isPlayerStart && !isExit && !isMonsterStart && distToPlayer > 4) {
+                candidates.push({ col: c, row: r });
+              }
+            }
+          }
+        }
+        
+        const selected = [];
+        for (let i = 0; i < count; i++) {
+          if (candidates.length === 0) break;
+          // Filter candidates to ensure keys are at least 4 tiles apart
+          let validCandidates = candidates;
+          if (selected.length > 0) {
+            validCandidates = candidates.filter(cand => {
+              return selected.every(sel => {
+                const selCol = Math.floor(sel.x / TILE);
+                const selRow = Math.floor(sel.y / TILE);
+                return Math.abs(cand.col - selCol) + Math.abs(cand.row - selRow) >= 4;
+              });
+            });
+          }
+          
+          const sourceList = validCandidates.length > 0 ? validCandidates : candidates;
+          const index = Math.floor(Math.random() * sourceList.length);
+          const choice = sourceList[index];
+          
+          const mainIndex = candidates.findIndex(cand => cand.col === choice.col && cand.row === choice.row);
+          if (mainIndex !== -1) {
+            candidates.splice(mainIndex, 1);
+          }
+          selected.push(tw(choice.col, choice.row));
+        }
+        return selected;
+      }
+
       create() {
         const W = COLS * TILE, H = ROWS * TILE;
 
         this.battery = 100; this.lightOn = false; this.hasKey = false;
         this.startTime = this.time.now; this.dead = false; this.won = false;
         this.flickerTimer = 0; this.flickerOff = false;
-        this.segs = buildSegments(); this.music = null; this.hbCool = 0;
+        this.segs = buildSegments();
+
+        // Reuse or play background music at 100% volume
+        this.bgMusic = this.sound.get('background');
+        if (!this.bgMusic) {
+          this.bgMusic = this.sound.add('background', { loop: true, volume: 1.0 });
+          this.bgMusic.play();
+        } else {
+          this.bgMusic.setVolume(1.0);
+          if (!this.bgMusic.isPlaying) {
+            this.bgMusic.play();
+          }
+        }
+        this.crunchingSound = null;
 
         // depth: 0=floor  1=walls  2=cone  3=aura  4=items  5=monster  6=player  8=vignette  10=HUD
 
@@ -215,12 +353,17 @@
         // cone (redrawn every frame)
         this.coneGfx = this.add.graphics().setDepth(2);
 
-
         // exit
         this.exitPos = tw(1, 13); this.exitGfx = this.add.graphics().setDepth(4); this.drawExit();
 
-        // key
-        this.keyPos = tw(13, 1); this.keyGfx = this.add.graphics().setDepth(4);
+        // 2 keys (random locations)
+        this.keysList = [];
+        const keyTiles = this.getRandomKeyTiles(2);
+        for (const tile of keyTiles) {
+          this.keysList.push({ pos: tile, collected: false });
+        }
+        this.collectedKeysCount = 0;
+        this.keyGfx = this.add.graphics().setDepth(4);
 
         // monster body (only when lit)
         this.monGfx = this.add.graphics().setDepth(5);
@@ -233,7 +376,6 @@
         this.playerGfx = this.add.graphics().setDepth(6);
         this.p = { x: tw(1, 1).x, y: tw(1, 1).y, angle: 0, speed: 110, r: 9 };
 
-
         // HUD
         this.buildHUD(W);
 
@@ -243,61 +385,56 @@
 
         // input
         this.keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT');
-        this.input.on('pointerdown', p => { if (p.leftButtonDown()) this.lightOn = true; this.initAudio(); });
+        this.input.on('pointerdown', p => { if (p.leftButtonDown()) this.lightOn = true; });
         this.input.on('pointerup', () => { this.lightOn = false; });
-        this.input.keyboard.on('keydown', () => this.initAudio());
-      }
-
-      initAudio() {
-        if (this.music) return;
-        try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); this.music = new HorrorMusic(ctx); } catch (e) { }
       }
 
       buildHUD(W) {
         this.add.rectangle(0, 0, W, 26, 0x000000, 0.85).setOrigin(0, 0).setScrollFactor(0).setDepth(10);
         this.hudLight = this.add.text(8, 6, 'LIGHT: OFF', { fontSize: '12px', fontFamily: 'monospace', color: '#555' }).setScrollFactor(0).setDepth(11);
-        this.hudBat = this.add.text(W / 2 - 55, 6, 'BATTERY: 100', { fontSize: '12px', fontFamily: 'monospace', color: '#888' }).setScrollFactor(0).setDepth(11);
-        this.hudKey = this.add.text(W - 85, 6, 'KEY: NO', { fontSize: '12px', fontFamily: 'monospace', color: '#555' }).setScrollFactor(0).setDepth(11);
+        this.hudBat = this.add.text(W * 0.28, 6, 'BATTERY: 100', { fontSize: '12px', fontFamily: 'monospace', color: '#888' }).setScrollFactor(0).setDepth(11);
+        this.hudTime = this.add.text(W * 0.56, 6, 'TIME: 0.0s', { fontSize: '12px', fontFamily: 'monospace', color: '#aaa' }).setScrollFactor(0).setDepth(11);
+        this.hudKey = this.add.text(W - 95, 6, 'KEYS: 0/2', { fontSize: '12px', fontFamily: 'monospace', color: '#555' }).setScrollFactor(0).setDepth(11);
       }
 
       drawExit() {
-        const { x, y } = this.exitPos, col = this.hasKey ? 0x00ff88 : 0x005533, alpha = this.hasKey ? 0.6 : 0.25;
         this.exitGfx.clear();
+        if (!this.hasKey) return;
+        const { x, y } = this.exitPos, col = 0x00ff88, alpha = 0.6;
         this.exitGfx.lineStyle(3, col, 1).strokeRect(x - 14, y - 20, 28, 40);
         this.exitGfx.fillStyle(col, alpha).fillRect(x - 14, y - 20, 28, 40);
         this.exitGfx.lineStyle(1.5, col, 0.7).strokeCircle(x + 7, y, 3);
       }
 
-      drawKey(t) {
+      drawKeys(t, litKeys) {
         this.keyGfx.clear();
-        if (this.hasKey) return;
         const pulse = 0.5 + 0.5 * Math.sin(t / 320), br = Math.floor(130 + 125 * pulse);
         const col = Phaser.Display.Color.GetColor(br, Math.floor(br * 0.82), 0);
-        const { x, y } = this.keyPos;
-        this.keyGfx.fillStyle(col).fillCircle(x, y, 7);
-        this.keyGfx.fillRect(x + 3, y - 2.5, 11, 5).fillRect(x + 10, y - 2.5, 3, 7).fillRect(x + 7, y - 2.5, 3, 6);
-        this.keyGfx.lineStyle(1, col, 0.4 * pulse).strokeCircle(x, y, 11);
+        
+        for (let i = 0; i < this.keysList.length; i++) {
+          const key = this.keysList[i];
+          if (key.collected || !litKeys[i]) continue;
+          const { x, y } = key.pos;
+          this.keyGfx.fillStyle(col).fillCircle(x, y, 7);
+          this.keyGfx.fillRect(x + 3, y - 2.5, 11, 5).fillRect(x + 10, y - 2.5, 3, 7).fillRect(x + 7, y - 2.5, 3, 6);
+          this.keyGfx.lineStyle(1, col, 0.4 * pulse).strokeCircle(x, y, 11);
+        }
       }
 
       drawMonster(lit) {
         this.monGfx.clear();
         if (!lit) return;
-        const { x, y, angle, frozen } = this.mon, col = frozen ? 0x882222 : 0xff2200, sz = 14;
-        this.monGfx.fillStyle(col).fillTriangle(
-          x + Math.cos(angle) * sz, y + Math.sin(angle) * sz,
-          x + Math.cos(angle + 2.25) * sz * .6, y + Math.sin(angle + 2.25) * sz * .6,
-          x + Math.cos(angle - 2.25) * sz * .6, y + Math.sin(angle - 2.25) * sz * .6
-        );
-        this.monGfx.fillStyle(frozen ? 0x441111 : 0xffffff);
-        this.monGfx.fillCircle(x + Math.cos(angle - .35) * 9, y + Math.sin(angle - .35) * 9, 2.2);
-        this.monGfx.fillCircle(x + Math.cos(angle + .35) * 9, y + Math.sin(angle + .35) * 9, 2.2);
+        const { x, y, angle, frozen } = this.mon, col = frozen ? 0x882222 : 0xe52b2b;
+        // Draw villain as red circle with white eye/dot inside
+        this.monGfx.fillStyle(col).fillCircle(x, y, 9);
+        this.monGfx.fillStyle(0xffffff).fillCircle(x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, 3);
       }
 
       drawPlayer() {
         const { x, y, angle, r } = this.p;
         this.playerGfx.clear();
-        this.playerGfx.fillStyle(0xffffff).fillCircle(x, y, r);
-        this.playerGfx.fillStyle(0x000000).fillCircle(x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, 3);
+        this.playerGfx.fillStyle(0xffffff).fillCircle(x, y, r); // white circle
+        this.playerGfx.fillStyle(0xe52b2b).fillCircle(x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, 3); // red dot
       }
 
       canMoveTo(x, y) {
@@ -396,8 +533,13 @@
         this.drawMonster(monLit);
 
         // pickups
-        if (!this.hasKey && Phaser.Math.Distance.Between(p.x, p.y, this.keyPos.x, this.keyPos.y) < 20) {
-          this.hasKey = true; this.drawExit();
+        for (const key of this.keysList) {
+          if (!key.collected && Phaser.Math.Distance.Between(p.x, p.y, key.pos.x, key.pos.y) < 20) {
+            key.collected = true;
+            this.collectedKeysCount++;
+            this.hasKey = (this.collectedKeysCount === 2);
+            this.drawExit();
+          }
         }
         if (this.hasKey && Phaser.Math.Distance.Between(p.x, p.y, this.exitPos.x, this.exitPos.y) < 22) {
           this.end(true); return;
@@ -407,32 +549,84 @@
         const mdist = Phaser.Math.Distance.Between(p.x, p.y, m.x, m.y);
         if (mdist < 16) { this.end(false); return; }
 
-        // audio
-        if (this.music) {
-          this.music.update(dt, Math.max(0, 1 - mdist / 250));
-          this.hbCool -= dt;
-          const iv = Phaser.Math.Linear(.2, 1.1, Math.min(1, (mdist - 16) / 220));
-          if (this.hbCool <= 0) { this.hbCool = iv; this.music.heartbeat(); }
+        // proximity audio (crunching sound 2-3 grids away, i.e. within TILE * 3.2 units)
+        const crunchDistance = TILE * 3.2;
+        if (mdist < crunchDistance && !this.dead && !this.won) {
+          if (!this.crunchingSound) {
+            this.crunchingSound = this.sound.add('crunching', { loop: true, volume: 0.8 });
+            this.crunchingSound.play();
+          }
+        } else {
+          if (this.crunchingSound) {
+            this.crunchingSound.stop();
+            this.crunchingSound = null;
+          }
         }
 
+        // key visibility check
+        const litKeys = this.keysList.map(k => {
+          return !k.collected && !!(cone && cone.length > 2 && inPoly(k.pos.x, k.pos.y, cone));
+        });
+
         // draw
-        this.drawKey(time);
+        this.drawKeys(time, litKeys);
         this.drawPlayer();
 
         // HUD
         this.hudLight.setText(`LIGHT: ${litActive ? 'ON ' : 'OFF'}`).setColor(litActive ? '#fff' : '#555');
         const pct = this.battery / 100;
         this.hudBat.setText(`BATTERY: ${Math.floor(this.battery)}`).setColor(pct > .4 ? '#0c4' : pct > .15 ? '#fa0' : '#f22');
-        this.hudKey.setText(`KEY: ${this.hasKey ? 'YES' : 'NO '}`).setColor(this.hasKey ? '#fd0' : '#555');
+        
+        const elapsedSecs = ((this.time.now - this.startTime) / 1000).toFixed(1);
+        this.hudTime.setText(`TIME: ${elapsedSecs}s`);
+
+        this.hudKey.setText(`KEYS: ${this.collectedKeysCount}/2`).setColor(this.hasKey ? '#fd0' : '#555');
       }
 
       end(won) {
         if (this.dead || this.won) return;
         this.dead = !won; this.won = won;
+
+        // Stop audio
+        if (this.bgMusic) this.bgMusic.stop();
+        if (this.crunchingSound) {
+          this.crunchingSound.stop();
+          this.crunchingSound = null;
+        }
+
         const secs = ((this.time.now - this.startTime) / 1000).toFixed(1);
+
+        if (won) {
+          this.sound.play('winning', { volume: 0.8 });
+
+          if (!this.textures.exists('confetti')) {
+            const canvas = this.textures.createCanvas('confetti', 8, 8);
+            canvas.context.fillStyle = '#ffffff';
+            canvas.context.fillRect(0, 0, 8, 8);
+            canvas.refresh();
+          }
+
+          const W = this.scale.width;
+          this.add.particles(0, 0, 'confetti', {
+            x: { min: 0, max: W },
+            y: -20,
+            lifespan: 4000,
+            speedY: { min: 150, max: 350 },
+            speedX: { min: -100, max: 100 },
+            scale: { min: 0.6, max: 1.4 },
+            tint: [0xff0055, 0x00ffcc, 0xffcc00, 0xff33ff, 0x33ff33, 0x3399ff, 0xff7700],
+            rotate: { min: 0, max: 360 },
+            frequency: 30,
+            maxParticles: 180,
+            depth: 22
+          });
+        } else {
+          this.sound.play('death', { volume: 0.8 });
+        }
+
         this.tweens.add({
           targets: this.overlay, fillAlpha: .88, duration: 900, ease: 'Power2', onComplete: () => {
-            this.overlayTxt.setText(won ? `YOU ESCAPED!\n\nTime: ${secs}s\n\n[CLICK or SPACE] to play again` : `YOU WERE CAUGHT\n\n[CLICK or SPACE] to restart`);
+            this.overlayTxt.setText(won ? `CONGRATULATIONS!\nYOU ESCAPED!\n\nTime Taken: ${secs}s\n\n[CLICK or SPACE] to play again` : `YOU WERE CAUGHT\n\n[CLICK or SPACE] to restart`);
             this.input.keyboard.once('keydown-SPACE', () => this.scene.start('Game'));
             this.input.once('pointerdown', () => this.scene.start('Game'));
           }
